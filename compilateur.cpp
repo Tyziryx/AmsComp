@@ -51,12 +51,17 @@ void AdditiveOperator(void){
 }
 		
 void Digit(void){
-	if((current<'0')||(current>'9'))
-		Error("Chiffre attendu");		   // Digit expected
-	else{
-		cout << "\tpush $"<<current<<endl;
-		ReadChar();
-	}
+    if((current<'0')||(current>'9'))
+        Error("Chiffre attendu");           // Digit expected
+    else{
+        long val = 0;
+        // On accumule tous les chiffres d’un entier
+        while(current>='0' && current<='9'){
+            val = val*10 + (current - '0');
+            ReadChar();
+        }
+        cout << "\tpush $" << val << endl;
+    }
 }
 
 void ArithmeticExpression(void);			// Called by Term() and calls Term()
@@ -94,6 +99,75 @@ void ArithmeticExpression(void){
 	}
 
 }
+//on recoonait et traite les operateurs relationel , si il existe ou nan 
+void RelationalOperator(void){
+	if(current=='<'||current=='>'||current=='='|| current=='<' && (cin.peek() == '=' || cin.peek() == '>')||
+	current=='>' && (cin.peek() == '=') ) {
+		
+	char firstChar = current ;
+	ReadChar(); 
+
+	if ((firstChar == '<' && current == '>') ||
+		(firstChar == '<' && current == '=') ||
+		(firstChar == '>' && current == '=')) {
+			ReadChar();
+		}	
+	}else {
+		cout<<"Erreur Operateur relationel attendu"<<endl ; 
+	}
+}
+
+
+void Expression(void) {
+    ArithmeticExpression();
+    
+    // S'il y a un opérateur relationnel, on traite la deuxième expression arithmétique
+    if (current == '=' || current == '<' || current == '>') {
+        char op1 = current;
+        char op2 = '\0';
+        
+        // Sauvegarde le premier caractère de l'opérateur
+        if (current == '<' && cin.peek() == '>') {
+            op2 = '>';
+            RelationalOperator();
+        } else if (current == '<' && cin.peek() == '=') {
+            op2 = '=';
+            RelationalOperator();
+        } else if (current == '>' && cin.peek() == '=') {
+            op2 = '=';
+            RelationalOperator();
+        } else {
+            RelationalOperator();
+        }
+        
+        // Analyse la deuxième expression arithmétique
+        ArithmeticExpression();
+        
+        // Génère le code pour comparer les deux valeurs
+        cout << "\tpop %rbx" << endl;      // Récupère la deuxième opérande
+        cout << "\tpop %rax" << endl;      // Récupère la première opérande
+        cout << "\tcmpq %rbx, %rax" << endl;  // Compare rax et rbx
+        
+        // Génère le code pour définir le résultat en fonction de l'opérateur
+        if (op1 == '=' && op2 == '\0') {
+            cout << "\tsete %cl" << endl;       // Égal
+        } else if (op1 == '<' && op2 == '>') {
+            cout << "\tsetne %cl" << endl;      // Non égal
+        } else if (op1 == '<' && op2 == '\0') {
+            cout << "\tsetl %cl" << endl;       // Inférieur
+        } else if (op1 == '<' && op2 == '=') {
+            cout << "\tsetle %cl" << endl;      // Inférieur ou égal
+        } else if (op1 == '>' && op2 == '\0') {
+            cout << "\tsetg %cl" << endl;       // Supérieur
+        } else if (op1 == '>' && op2 == '=') {
+            cout << "\tsetge %cl" << endl;      // Supérieur ou égal
+        }
+        
+        // Extension zero et stockage du résultat
+        cout << "\tmovzbq %cl, %rax" << endl;
+        cout << "\tpush %rax" << endl;
+    }
+}
 
 int main(void){	// First version : Source code on standard input and assembly code on standard output
 	// Header for gcc assembler / linker
@@ -105,7 +179,7 @@ int main(void){	// First version : Source code on standard input and assembly co
 
 	// Let's proceed to the analysis and code production
 	ReadChar();
-	ArithmeticExpression();
+	Expression();
 	ReadChar();
 	// Trailer for the gcc assembler / linker
 	cout << "\tmovq %rbp, %rsp\t\t# Restore the position of the stack's top"<<endl;
@@ -116,8 +190,8 @@ int main(void){	// First version : Source code on standard input and assembly co
 	}
 
 }
-		
-			
+
+
 
 
 
