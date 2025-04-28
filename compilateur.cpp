@@ -28,8 +28,17 @@ char current;				// Current car
 
 void ReadChar(void){		// Read character and skip spaces until 
 				// non space character is read
-	while(cin.get(current) && (current==' '||current=='\t'||current=='\n'))
-	   	cin.get(current);
+    if (!cin.get(current)) {  // EOF → on marque current à '\0'
+        current = '\0';
+        return;
+    }
+    // saute tous les blancs
+    while (current==' ' || current=='\t' || current=='\n') {
+        if (!cin.get(current)) {
+            current = '\0';
+            return;
+        }
+    }
 }
 
 void Error(string s){
@@ -101,20 +110,14 @@ void ArithmeticExpression(void){
 }
 //on recoonait et traite les operateurs relationel , si il existe ou nan 
 void RelationalOperator(void){
-	if(current=='<'||current=='>'||current=='='|| current=='<' && (cin.peek() == '=' || cin.peek() == '>')||
-	current=='>' && (cin.peek() == '=') ) {
-		
-	char firstChar = current ;
-	ReadChar(); 
+    char firstChar = current;
+    ReadChar();                // on consomme le 1er caractère de l’opérateur
 
-	if ((firstChar == '<' && current == '>') ||
-		(firstChar == '<' && current == '=') ||
-		(firstChar == '>' && current == '=')) {
-			ReadChar();
-		}	
-	}else {
-		cout<<"Erreur Operateur relationel attendu"<<endl ; 
-	}
+    // si c’est un opérateur à deux caractères (<>, <=, >=), on consomme le 2ᵉ
+    if ((firstChar=='<' && (current=='>'||current=='=')) ||
+        (firstChar=='>' && current=='=')) {
+        ReadChar();
+    }
 }
 
 

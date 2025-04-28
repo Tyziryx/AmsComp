@@ -9,4 +9,17 @@ main:			# The main function body :
 	pop %rax
 	addq	%rbx, %rax
 	push %rax
-	push $10
+	push $11
+	push $2
+	pop %rbx
+	pop %rax
+	subq	%rbx, %rax
+	push %rax
+	pop %rbx
+	pop %rax
+	cmpq %rbx, %rax
+	setl %cl
+	movzbq %cl, %rax
+	push %rax
+	movq %rbp, %rsp		# Restore the position of the stack's top
+	ret			# Return from main function
