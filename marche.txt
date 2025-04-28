@@ -1,0 +1,7 @@
+g++ -o compilateur compilateur.cpp
+./compilateur < test.txt > output.s
+
+
+gcc -o test_program output.s
+./test_program
+echo $?
