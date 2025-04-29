@@ -31,6 +31,25 @@ relop	(\<|\>|"=="|\<=|\>=|!=)
 unknown [^\"A-Za-z0-9 \n\r\t\(\)\<\>\=\!\%\&\|\}\-\;\.]+
 
 %%
+"if"        return IF;     /* Mots-clés en minuscules */
+"then"      return THEN;
+"else"      return ELSE;
+"while"     return WHILE;
+"do"        return DO;
+"for"       return FOR;
+"to"        return TO;
+"begin"     return BEG;     /* Mots-clés en minuscules */
+"end"       return END;
+
+"IF"        return IF;     /* Mots-clés en majuscules selon la grammaire */
+"THEN"      return THEN;
+"ELSE"      return ELSE;
+"WHILE"     return WHILE;
+"DO"        return DO;
+"FOR"       return FOR;
+"TO"        return TO;
+"BEGIN"     return BEG;     /* Mots-clés en majuscules selon la grammaire */
+"END"       return END;
 
 {addop}		return ADDOP;
 {mulop}		return MULOP;

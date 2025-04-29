@@ -98,6 +98,13 @@ void Error(string s){
     exit(-1);  // Quitte avec code d'erreur
 }
 
+// Déclarations anticipées
+void Statement(void);
+void IfStatement(void);
+void WhileStatement(void);
+void ForStatement(void);
+void BlockStatement(void);
+
 // =========================================================================
 // SECTION 5: GRAMMAIRE DU LANGAGE
 // =========================================================================
@@ -106,8 +113,13 @@ void Error(string s){
 // Program := [DeclarationPart] StatementPart
 // DeclarationPart := "[" Letter {"," Letter} "]"
 // StatementPart := Statement {";" Statement} "."
-// Statement := AssignementStatement
-// AssignementStatement := Letter "=" Expression
+
+// Statement := AssignementStatement | IfStatement | WhileStatement | ForStatement | BlockStatement
+// AssignementStatement := Letter ":=" Expression
+// IfStatement := "if" Expression "then" Statement ["else" Statement]
+// WhileStatement := "while" Expression "do" Statement
+// ForStatement := "for" Letter ":=" Expression "to" Expression "do" Statement
+// BlockStatement := "begin" Statement {";" Statement} "end"
 
 // Expression := SimpleExpression [RelationalOperator SimpleExpression]
 // SimpleExpression := Term {AdditiveOperator Term}
@@ -456,9 +468,198 @@ void AssignementStatement(void){
     cout << "\tpop " << variable << endl;
 }
 
-// Analyse une instruction: AssignementStatement
+// Analyse une instruction conditionnelle: "if" Expression "then" Statement ["else" Statement]
+void IfStatement(void){
+    unsigned long tag = ++TagNumber; // Étiquette unique pour ce if
+    
+    // Consomme "if"
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse de l'expression conditionnelle
+    Expression();
+    
+    // Génération du code pour le test
+    cout << "\tpop %rax" << endl;             // Récupère la valeur de la condition
+    cout << "\ttest %rax, %rax" << endl;      // Test si la condition est fausse (0)
+    cout << "\tjz Else" << tag << endl;       // Si fausse, saute au bloc else
+    
+    // Vérifie la présence du "then"
+    if(current != ID || strcmp(lexer->YYText(), "then") != 0)
+        Error("'then' attendu");
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse de l'instruction du bloc "then"
+    Statement();
+    
+    // Saute la partie else
+    cout << "\tjmp EndIf" << tag << endl;
+    
+    // Début du bloc else
+    cout << "Else" << tag << ":" << endl;
+    
+    // Si un "else" est présent
+    if(current == ID && strcmp(lexer->YYText(), "else") == 0){
+        current = (TOKEN) lexer->yylex();
+        // Analyse de l'instruction du bloc "else"
+        Statement();
+    }
+    
+    // Fin de l'instruction if
+    cout << "EndIf" << tag << ":" << endl;
+}
+
+// Analyse une boucle while: "while" Expression "do" Statement
+void WhileStatement(void){
+    unsigned long tag = ++TagNumber; // Étiquette unique pour cette boucle
+    
+    // Consomme "while"
+    current = (TOKEN) lexer->yylex();
+    
+    // Début de la boucle (pour réévaluer la condition)
+    cout << "While" << tag << ":" << endl;
+    
+    // Analyse de l'expression conditionnelle
+    Expression();
+    
+    // Génération du code pour le test
+    cout << "\tpop %rax" << endl;              // Récupère la valeur de la condition
+    cout << "\ttest %rax, %rax" << endl;       // Test si la condition est fausse (0)
+    cout << "\tjz EndWhile" << tag << endl;    // Si fausse, sort de la boucle
+    
+    // Vérifie la présence du "do"
+    if(current != ID || strcmp(lexer->YYText(), "do") != 0)
+        Error("'do' attendu");
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse de l'instruction du bloc de la boucle
+    Statement();
+    
+    // Retour au début de la boucle
+    cout << "\tjmp While" << tag << endl;
+    
+    // Fin de la boucle while
+    cout << "EndWhile" << tag << ":" << endl;
+}
+
+// Analyse une boucle for: "for" AssignementStatement "to" Expression "do" Statement
+void ForStatement(void){
+    unsigned long tag = ++TagNumber; // Étiquette unique pour cette boucle
+    string control_var; // Variable de contrôle de la boucle
+    
+    // Consomme "for"
+    current = (TOKEN) lexer->yylex();
+    
+    // Vérifie si c'est un identifiant (nom de variable)
+    if(current != ID)
+        Error("Identificateur attendu après 'for'");
+    
+    // Sauvegarde le nom de la variable de contrôle
+    control_var = lexer->YYText();
+    
+    // Vérifie si la variable a été déclarée
+    if(!IsDeclared(control_var.c_str())){
+        cerr << "Erreur : Variable de contrôle '" << control_var << "' non déclarée" << endl;
+        exit(-1);
+    }
+    
+    // Passe au token suivant (doit être :=)
+    current = (TOKEN) lexer->yylex();
+    if(current != ASSIGN)
+        Error("':=' attendu dans la boucle for");
+    
+    // Passe au token suivant
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse l'expression initiale
+    Expression();
+    
+    // Stocke la valeur initiale dans la variable de contrôle
+    cout << "\tpop " << control_var << endl;
+    
+    // Vérifie la présence du "to"
+    if(current != ID || strcmp(lexer->YYText(), "to") != 0)
+        Error("'to' attendu");
+    current = (TOKEN) lexer->yylex();
+    
+    // Début de la boucle
+    cout << "For" << tag << ":" << endl;
+    
+    // Analyse l'expression finale (limite)
+    Expression();
+    
+    // Compare la variable de contrôle avec la limite
+    cout << "\tpop %rax" << endl;                // Récupère la limite
+    cout << "\tcmpq %rax, " << control_var << endl;   // Compare la variable à la limite
+    cout << "\tjg EndFor" << tag << endl;        // Si variable > limite, sort de la boucle
+    
+    // Vérifie la présence du "do"
+    if(current != ID || strcmp(lexer->YYText(), "do") != 0)
+        Error("'do' attendu");
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse de l'instruction du bloc de la boucle
+    Statement();
+    
+    // Incrémente la variable de contrôle
+    cout << "\tincq " << control_var << endl;
+    
+    // Retour au début de la boucle
+    cout << "\tjmp For" << tag << endl;
+    
+    // Fin de la boucle for
+    cout << "EndFor" << tag << ":" << endl;
+}
+
+// Analyse un bloc d'instructions: "begin" Statement {";" Statement} "end"
+void BlockStatement(void){
+    // Consomme "begin"
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse la première instruction
+    Statement();
+    
+    // Tant qu'on trouve un point-virgule, on analyse une instruction supplémentaire
+    while(current == SEMICOLON){
+        // Passe au token suivant
+        current = (TOKEN) lexer->yylex();
+        // Analyse l'instruction suivante
+        Statement();
+    }
+    
+    // Vérifie la présence du "end"
+    if(current != ID || strcmp(lexer->YYText(), "end") != 0)
+        Error("'end' attendu");
+    
+    // Passe au token suivant
+    current = (TOKEN) lexer->yylex();
+}
+
+// Analyse une instruction
 void Statement(void){
-    AssignementStatement();
+    // Identifie le type d'instruction en fonction du token courant
+    if (current == ID) {
+        // Si c'est un identifiant, c'est une instruction d'assignation
+        AssignementStatement();
+    }
+    else if (current == IF) {
+        // Si c'est "if", c'est une instruction conditionnelle
+        IfStatement();
+    }
+    else if (current == WHILE) {
+        // Si c'est "while", c'est une boucle while
+        WhileStatement();
+    }
+    else if (current == FOR) {
+        // Si c'est "for", c'est une boucle for
+        ForStatement();
+    }
+    else if (current == BEG) {  // BEG au lieu de BEGIN
+        // Si c'est "begin", c'est un bloc d'instructions
+        BlockStatement();
+    }
+    else {
+        Error("Instruction attendue");
+    }
 }
 
 // Analyse la partie instruction: Statement {";" Statement} "."
