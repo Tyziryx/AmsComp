@@ -484,7 +484,7 @@ void IfStatement(void){
     cout << "\tjz Else" << tag << endl;       // Si fausse, saute au bloc else
     
     // Vérifie la présence du "then"
-    if(current != ID || strcmp(lexer->YYText(), "then") != 0)
+    if(current != THEN)
         Error("'then' attendu");
     current = (TOKEN) lexer->yylex();
     
@@ -498,7 +498,7 @@ void IfStatement(void){
     cout << "Else" << tag << ":" << endl;
     
     // Si un "else" est présent
-    if(current == ID && strcmp(lexer->YYText(), "else") == 0){
+    if(current == ELSE){
         current = (TOKEN) lexer->yylex();
         // Analyse de l'instruction du bloc "else"
         Statement();
@@ -527,7 +527,7 @@ void WhileStatement(void){
     cout << "\tjz EndWhile" << tag << endl;    // Si fausse, sort de la boucle
     
     // Vérifie la présence du "do"
-    if(current != ID || strcmp(lexer->YYText(), "do") != 0)
+    if(current != DO)
         Error("'do' attendu");
     current = (TOKEN) lexer->yylex();
     
@@ -577,7 +577,7 @@ void ForStatement(void){
     cout << "\tpop " << control_var << endl;
     
     // Vérifie la présence du "to"
-    if(current != ID || strcmp(lexer->YYText(), "to") != 0)
+    if(current != TO) // <-- Fixed to use TO token
         Error("'to' attendu");
     current = (TOKEN) lexer->yylex();
     
@@ -593,7 +593,7 @@ void ForStatement(void){
     cout << "\tjg EndFor" << tag << endl;        // Si variable > limite, sort de la boucle
     
     // Vérifie la présence du "do"
-    if(current != ID || strcmp(lexer->YYText(), "do") != 0)
+    if(current != DO)
         Error("'do' attendu");
     current = (TOKEN) lexer->yylex();
     
@@ -627,7 +627,7 @@ void BlockStatement(void){
     }
     
     // Vérifie la présence du "end"
-    if(current != ID || strcmp(lexer->YYText(), "end") != 0)
+    if(current != END)
         Error("'end' attendu");
     
     // Passe au token suivant

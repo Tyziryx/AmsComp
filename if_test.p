@@ -1,3 +1,5 @@
-[a,b]
-if 1==1 then a:=42 else a:=0;
-b:=a.
+[x, y]
+if x > 0 then
+   y := 1
+else
+   y := 0.
