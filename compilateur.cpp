@@ -28,7 +28,8 @@
 #include <FlexLexer.h>     // Pour l'analyseur lexical Flex
 #include "tokeniser.h"     // Définit les types de tokens (enum TOKEN)
 #include <cstring>         // Pour strcmp() utilisé pour comparer les opérateurs
-
+#include <map>
+#include <vector>
 using namespace std;
 
 // =========================================================================
@@ -75,7 +76,7 @@ FlexLexer* lexer = new yyFlexLexer;
 // et lexer->YYText() renvoie le texte du token sous forme de chaîne
 
 // Ensemble des variables déclarées dans le programme source
-set<string> DeclaredVariables;
+map<string, TYPE> DeclaredVariables;
 
 // Compteur pour générer des étiquettes uniques dans le code assembleur
 unsigned long TagNumber = 0;
@@ -85,8 +86,8 @@ unsigned long TagNumber = 0;
 // =========================================================================
 
 // Vérifie si un identifiant a été déclaré
-bool IsDeclared(const char *id){
-    // Recherche l'identifiant dans l'ensemble des variables déclarées
+bool IsDeclared(const char *id) {
+    // Recherche l'identifiant dans la map des variables déclarées
     return DeclaredVariables.find(id) != DeclaredVariables.end();
 }
 
@@ -104,6 +105,8 @@ void IfStatement(void);
 void WhileStatement(void);
 void ForStatement(void);
 void BlockStatement(void);
+void DisplayStatement(void);
+void VarDeclarationPart(void);
 TYPE Expression(void);
 TYPE SimpleExpression(void);
 TYPE Term(void);
@@ -142,10 +145,20 @@ TYPE Factor(void);
 // =========================================================================
 
 // Traite un identifiant (variable) et génère le code pour l'empiler
-TYPE Identifier(void){
-    cout << "\tpush " << lexer->YYText() << endl;
+TYPE Identifier(void) {
+    string varName = lexer->YYText();
+    
+    // Vérifie si la variable est déclarée
+    if (!IsDeclared(varName.c_str())) {
+        cerr << "Erreur : Variable '" << varName << "' non déclarée" << endl;
+        exit(-1);
+    }
+    
+    cout << "\tpush " << varName << endl;
     current = (TOKEN) lexer->yylex();
-    return UNSIGNED_INT; // For now, return UNSIGNED_INT for all identifiers
+    
+    // Retourne le type de la variable
+    return DeclaredVariables[varName];
 }
 
 // Traite un nombre et génère le code pour l'empiler
@@ -198,6 +211,16 @@ TYPE Factor(void){
     else if (current == ID)
         // Cas d'un identifiant
         result_type = Identifier();
+    else if (current == TRUE_LIT) {
+        cout << "\tpush $0xFFFFFFFFFFFFFFFF\t# True" << endl;
+        current = (TOKEN) lexer->yylex();
+        return BOOLEAN;
+    }
+    else if (current == FALSE_LIT) {
+        cout << "\tpush $0\t# False" << endl;
+        current = (TOKEN) lexer->yylex();
+        return BOOLEAN;
+    }
     else {
         Error("'(' ou chiffre ou lettre attendue");
         result_type = UNSIGNED_INT; // Default value, never reached due to Error()
@@ -367,7 +390,7 @@ TYPE SimpleExpression(void){
     return left_type;
 }
 
-// Analyse la partie déclaration: "[" Ident {"," Ident} "]"
+// Analyse la partie déclaration: "[" Ident {"," Ident} ":" Type
 void DeclarationPart(void){
     // Vérifie si le premier token est bien un crochet ouvrant
     if(current != RBRACKET)
@@ -387,7 +410,7 @@ void DeclarationPart(void){
     // Génération du code pour la première variable
     cout << lexer->YYText() << ":\t.quad 0" << endl;
     // Ajoute la variable à l'ensemble des variables déclarées
-    DeclaredVariables.insert(lexer->YYText());
+    DeclaredVariables[lexer->YYText()] = UNSIGNED_INT;
     
     // Passe au token suivant
     current = (TOKEN) lexer->yylex();
@@ -404,8 +427,7 @@ void DeclarationPart(void){
         // Génération du code pour cette variable
         cout << lexer->YYText() << ":\t.quad 0" << endl;
         // Ajoute la variable à l'ensemble des variables déclarées
-        DeclaredVariables.insert(lexer->YYText());
-        
+        DeclaredVariables[lexer->YYText()] = UNSIGNED_INT;        
         // Passe au token suivant
         current = (TOKEN) lexer->yylex();
     }
@@ -517,6 +539,7 @@ TYPE Expression(void){
 void AssignementStatement(void){
     string variable;
     TYPE expr_type;
+    TYPE var_type;
     
     // Vérifie si le premier token est un identifiant
     if(current != ID)
@@ -530,6 +553,9 @@ void AssignementStatement(void){
     
     // Sauvegarde le nom de la variable
     variable = lexer->YYText();
+    
+    // Récupère le type de la variable
+    var_type = DeclaredVariables[variable];
     
     // Passe au token suivant
     current = (TOKEN) lexer->yylex();
@@ -545,8 +571,7 @@ void AssignementStatement(void){
     expr_type = Expression();
     
     // Vérification de type - la variable et l'expression doivent être du même type
-    // Pour l'instant, toutes les variables sont de type UNSIGNED_INT
-    if (expr_type != UNSIGNED_INT) {
+    if (expr_type != var_type) {
         Error("Type incompatible dans l'assignation");
     }
     
@@ -742,30 +767,28 @@ void BlockStatement(void){
 }
 
 // Analyse une instruction
-void Statement(void){
-    // Identifie le type d'instruction en fonction du token courant
-    if (current == ID) {
-        // Si c'est un identifiant, c'est une instruction d'assignation
-        AssignementStatement();
-    }
-    else if (current == IF) {
-        // Si c'est "if", c'est une instruction conditionnelle
-        IfStatement();
-    }
-    else if (current == WHILE) {
-        // Si c'est "while", c'est une boucle while
-        WhileStatement();
-    }
-    else if (current == FOR) {
-        // Si c'est "for", c'est une boucle for
-        ForStatement();
-    }
-    else if (current == BEG) {  // BEG au lieu de BEGIN
-        // Si c'est "begin", c'est un bloc d'instructions
-        BlockStatement();
-    }
-    else {
-        Error("Instruction attendue");
+void Statement(void) {
+    switch(current) {
+        case IF:
+            IfStatement();
+            break;
+        case WHILE:
+            WhileStatement();
+            break;
+        case FOR:
+            ForStatement();
+            break;
+        case BEG:
+            BlockStatement();
+            break;
+        case DISPLAY:  // Ajoutez ce cas
+            DisplayStatement();
+            break;
+        case ID:
+            AssignementStatement();
+            break;
+        default:
+            Error("Instruction attendue");
     }
 }
 
@@ -796,11 +819,22 @@ void StatementPart(void){
     current = (TOKEN) lexer->yylex();
 }
 
-// Analyse un programme: [DeclarationPart] StatementPart
-void Program(void){
-    // Si le premier token est un crochet ouvrant, c'est une partie déclaration
-    if(current == RBRACKET)
+// Analyse un programme
+void Program(void) {
+    // Si le premier token est VAR, c'est une déclaration de variables typées
+    if (current == VAR)
+        VarDeclarationPart();
+    // Pour rétrocompatibilité avec l'ancienne syntaxe
+    else if (current == RBRACKET)
         DeclarationPart();
+    else {
+        // Si pas de déclaration, on génère quand même la section data pour FormatString1
+        cout << "\t.data" << endl;
+        cout << "\t.align 8" << endl;
+    }
+    
+    // Pour l'instruction DISPLAY
+    cout << "FormatString1:\t.string \"%llu\\n\"" << endl;
     
     // Analyse la partie instruction
     StatementPart();    
@@ -830,6 +864,116 @@ int main(void){
         cerr << "Caractères en trop à la fin du programme : [" << current << "]";
         Error("."); // Caractères inattendus à la fin du programme
     }
+}
+
+// Analyse et retourne le type après le ":"
+TYPE ParseType() {
+    if (current == INTEGER_TYPE) {
+        current = (TOKEN) lexer->yylex();
+        return UNSIGNED_INT;
+    } 
+    else if (current == BOOLEAN_TYPE) {
+        current = (TOKEN) lexer->yylex();
+        return BOOLEAN;
+    } 
+    else if (current == DOUBLE_TYPE) {
+        current = (TOKEN) lexer->yylex();
+        return DOUBLE;
+    }
+    else {
+        Error("Type attendu (INTEGER, BOOLEAN ou DOUBLE)");
+        return UNSIGNED_INT; 
+    }
+}
+
+// Analyse une déclaration de variables: Ident {"," Ident} ":" Type
+void VarDeclaration() {
+    vector<string> variables; // Liste des variables à déclarer dans ce groupe
+    TYPE varType;             // Type de ces variables
+    
+    // Premier identifiant
+    if (current != ID)
+        Error("Identificateur attendu");
+    
+    // Stocke le premier identifiant en entier, sans découper sur les underscores
+    string varName = lexer->YYText();
+    variables.push_back(varName);
+    current = (TOKEN) lexer->yylex();
+    
+    // Autres identifiants séparés par des virgules
+    while (current == COMMA) {
+        current = (TOKEN) lexer->yylex();
+        
+        if (current != ID)
+            Error("Identificateur attendu après virgule");
+        
+        variables.push_back(lexer->YYText());
+        current = (TOKEN) lexer->yylex();
+    }
+    
+    // Vérifie le deux-points
+    if (current != COLON)
+        Error("':' attendu après les identifiants");
+    
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse le type
+    varType = ParseType();
+    
+    // Déclare toutes les variables avec le même type
+    for (const string& var : variables) {
+        cout << var << ":\t.quad 0" << endl;
+        DeclaredVariables[var] = varType;
+    }
+}
+
+// Analyse la partie déclaration de variables: "VAR" VarDeclaration {";" VarDeclaration} "."
+void VarDeclarationPart() {
+    // Vérifie le mot-clé VAR
+    if (current != VAR)
+        Error("'VAR' attendu");
+    
+    current = (TOKEN) lexer->yylex();
+    
+    // Génère le code pour la section données
+    cout << "\t.data" << endl;
+    cout << "\t.align 8" << endl;
+    
+    // Première déclaration de variables
+    VarDeclaration();
+    
+    // Autres déclarations séparées par des points-virgules
+    while (current == SEMICOLON) {
+        current = (TOKEN) lexer->yylex();
+        
+        // Si on trouve un point, c'est la fin des déclarations
+        if (current == DOT)
+            break;
+        
+        VarDeclaration();
+    }
+    
+    // Vérifie la présence du point final
+    if (current != DOT)
+        Error("caractère '.' attendu après les déclarations");
+    
+    current = (TOKEN) lexer->yylex();
+}
+
+// Analyse une instruction DISPLAY: "DISPLAY" Expression
+void DisplayStatement(void) {
+    // Consomme le token DISPLAY
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse l'expression à afficher
+    TYPE expr_type = Expression();
+    
+    // Génère le code pour afficher la valeur
+    cout << "\tpop %rdx" << endl;                 // Récupère la valeur à afficher
+    cout << "\tmovq $FormatString1, %rsi" << endl;// Format d'affichage
+    cout << "\tmovl $1, %edi" << endl;            // Premier argument de printf_chk
+    cout << "\tmovl $0, %eax" << endl;            // Pas d'arguments flottants
+    cout << "\tcall __printf_chk@PLT" << endl;    // Appel à la fonction printf sécurisée
 }
 
 

@@ -24,7 +24,7 @@ ws      [ \t\n\r]+
 alpha   [A-Za-z]
 digit   [0-9]
 number  {digit}+
-id	{alpha}({alpha}|{digit})*
+id	{alpha}({alpha}|{digit}|_)*
 addop	(\+|\-|\|\|)
 mulop	(\*|\/|%|\&\&)
 relop	(\<|\>|"=="|\<=|\>=|!=)
@@ -50,6 +50,17 @@ unknown [^\"A-Za-z0-9 \n\r\t\(\)\<\>\=\!\%\&\|\}\-\;\.]+
 "TO"        return TO;
 "BEGIN"     return BEG;     /* Mots-clés en majuscules selon la grammaire */
 "END"       return END;
+"DISPLAY"   return DISPLAY; 
+"VAR"       return VAR; 
+"INTEGER"   return INTEGER_TYPE; 
+"BOOLEAN"   return BOOLEAN_TYPE; 
+"DOUBLE"    return DOUBLE_TYPE; 
+":"         return COLON; 
+
+
+
+"TRUE"      return TRUE_LIT; 
+"FALSE"     return FALSE_LIT; 
 
 {addop}		return ADDOP;
 {mulop}		return MULOP;
