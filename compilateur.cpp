@@ -104,6 +104,10 @@ void IfStatement(void);
 void WhileStatement(void);
 void ForStatement(void);
 void BlockStatement(void);
+TYPE Expression(void);
+TYPE SimpleExpression(void);
+TYPE Term(void);
+TYPE Factor(void);
 
 // =========================================================================
 // SECTION 5: GRAMMAIRE DU LANGAGE
@@ -138,44 +142,68 @@ void BlockStatement(void);
 // =========================================================================
 
 // Traite un identifiant (variable) et génère le code pour l'empiler
-void Identifier(void){
-    // Génère une instruction pour pousser la valeur de la variable sur la pile
+TYPE Identifier(void){
     cout << "\tpush " << lexer->YYText() << endl;
-    // Passe au token suivant
     current = (TOKEN) lexer->yylex();
+    return UNSIGNED_INT; // For now, return UNSIGNED_INT for all identifiers
 }
 
 // Traite un nombre et génère le code pour l'empiler
-void Number(void){
+TYPE Number(void){
     // Génère une instruction pour pousser la valeur littérale sur la pile
     // Note: le $ indique une valeur immédiate en assembleur x86
     cout << "\tpush $" << atoi(lexer->YYText()) << endl;
     // Passe au token suivant
     current = (TOKEN) lexer->yylex();
+    return UNSIGNED_INT;
 }
 
 // Déclaration anticipée: Expression sera définie plus tard
-void Expression(void);  // Appelé par Factor() et utilisera à son tour Term()
+TYPE Expression(void);  // Appelé par Factor() et utilisera à son tour Term()
 
 // Analyse un facteur (nombre, variable ou expression parenthésée)
-void Factor(void){
-    if(current == RPARENT){
+TYPE Factor(void){
+    TYPE result_type;
+    
+    // Ajout du support de l'opérateur NOT
+    if(current == NOT){
+        // Cas d'une négation: !Factor
+        current = (TOKEN) lexer->yylex();  // Consomme le '!'
+        result_type = Factor();            // Analyse le facteur à nier
+        
+        // Vérifier que l'opérande est de type BOOLEAN
+        if (result_type != BOOLEAN) {
+            Error("L'opérande de '!' doit être de type booléen");
+        }
+        
+        // Générer le code pour la négation
+        cout << "\tpop %rax" << endl;                  // Récupère la valeur
+        cout << "\tnot %rax" << endl;                  // NOT bit à bit
+        cout << "\tpush %rax\t# NOT" << endl;          // Empile le résultat
+        
+        return BOOLEAN;
+    }
+    else if(current == RPARENT){
         // Cas d'une expression parenthésée: (Expression)
         current = (TOKEN) lexer->yylex();  // Consomme la parenthèse ouvrante
-        Expression();                       // Analyse l'expression
+        result_type = Expression();        // Analyse l'expression
         if(current != LPARENT)
-            Error("')' était attendu");     // Vérifie la parenthèse fermante
+            Error("')' était attendu");    // Vérifie la parenthèse fermante
         else
             current = (TOKEN) lexer->yylex(); // Consomme la parenthèse fermante
     }
     else if (current == NUMBER)
         // Cas d'un nombre
-        Number();
+        result_type = Number();
     else if (current == ID)
         // Cas d'un identifiant
-        Identifier();
-    else
+        result_type = Identifier();
+    else {
         Error("'(' ou chiffre ou lettre attendue");
+        result_type = UNSIGNED_INT; // Default value, never reached due to Error()
+    }
+    
+    return result_type;
 }
 
 // Analyse un opérateur multiplicatif et renvoie son type
@@ -200,16 +228,34 @@ OPMUL MultiplicativeOperator(void){
 }
 
 // Analyse un terme: Factor {MultiplicativeOperator Factor}
-void Term(void){
+TYPE Term(void){
     OPMUL mulop;
+    TYPE left_type, right_type;
     
     // Analyse le premier facteur
-    Factor();
+    left_type = Factor();
     
     // Tant qu'on trouve un opérateur multiplicatif, on continue l'analyse
     while(current == MULOP){
         mulop = MultiplicativeOperator();  // Sauvegarde l'opérateur
-        Factor();                          // Analyse le facteur suivant
+        right_type = Factor();             // Analyse le facteur suivant
+        
+        // Vérification de type
+        if (mulop == AND) {
+            // Pour l'opérateur AND, les deux opérandes doivent être de type BOOLEAN
+            if (left_type != BOOLEAN || right_type != BOOLEAN) {
+                Error("Les opérandes de '&&' doivent être de type booléen");
+            }
+            // Le résultat est de type BOOLEAN
+            left_type = BOOLEAN;
+        } else {
+            // Pour les opérateurs arithmétiques (MUL, DIV, MOD), les deux opérandes doivent être de type UNSIGNED_INT
+            if (left_type != UNSIGNED_INT || right_type != UNSIGNED_INT) {
+                Error("Les opérandes des opérateurs arithmétiques doivent être de type entier");
+            }
+            // Le résultat reste de type UNSIGNED_INT
+            left_type = UNSIGNED_INT;
+        }
         
         // Génération du code assembleur pour l'opération multiplicative
         cout << "\tpop %rbx" << endl;      // Récupère le deuxième opérande
@@ -239,6 +285,8 @@ void Term(void){
                 Error("opérateur multiplicatif attendu");
         }
     }
+    
+    return left_type;
 }
 
 // Analyse un opérateur additif et renvoie son type
@@ -261,16 +309,34 @@ OPADD AdditiveOperator(void){
 }
 
 // Analyse une expression simple: Term {AdditiveOperator Term}
-void SimpleExpression(void){
+TYPE SimpleExpression(void){
     OPADD adop;
+    TYPE left_type, right_type;
     
     // Analyse le premier terme
-    Term();
+    left_type = Term();
     
     // Tant qu'on trouve un opérateur additif, on continue l'analyse
     while(current == ADDOP){
         adop = AdditiveOperator();  // Sauvegarde l'opérateur
-        Term();                     // Analyse le terme suivant
+        right_type = Term();        // Analyse le terme suivant
+        
+        // Vérification de type
+        if (adop == OR) {
+            // Pour l'opérateur OR, les deux opérandes doivent être de type BOOLEAN
+            if (left_type != BOOLEAN || right_type != BOOLEAN) {
+                Error("Les opérandes de '||' doivent être de type booléen");
+            }
+            // Le résultat est de type BOOLEAN
+            left_type = BOOLEAN;
+        } else {
+            // Pour les opérateurs arithmétiques (ADD, SUB), les deux opérandes doivent être de type UNSIGNED_INT
+            if (left_type != UNSIGNED_INT || right_type != UNSIGNED_INT) {
+                Error("Les opérandes des opérateurs arithmétiques doivent être de type entier");
+            }
+            // Le résultat reste de type UNSIGNED_INT
+            left_type = UNSIGNED_INT;
+        }
         
         // Génération du code assembleur pour l'opération additive
         cout << "\tpop %rbx" << endl;  // Récupère le deuxième opérande
@@ -281,13 +347,13 @@ void SimpleExpression(void){
             case OR:
                 // OR logique implémenté comme une addition (non standard)
                 cout << "\taddq %rbx, %rax\t# OR" << endl;
-                break;			
+                break;            
             case ADD:
                 // Addition
                 cout << "\taddq %rbx, %rax\t# ADD" << endl;
-                break;			
+                break;            
             case SUB:
-                // Soustraction	
+                // Soustraction    
                 cout << "\tsubq %rbx, %rax\t# SUB" << endl;
                 break;
             default:
@@ -297,7 +363,8 @@ void SimpleExpression(void){
         // Empile le résultat
         cout << "\tpush %rax" << endl;
     }
-
+    
+    return left_type;
 }
 
 // Analyse la partie déclaration: "[" Ident {"," Ident} "]"
@@ -377,16 +444,25 @@ OPREL RelationalOperator(void){
 }
 
 // Analyse une expression: SimpleExpression [RelationalOperator SimpleExpression]
-void Expression(void){
+TYPE Expression(void){
     OPREL oprel;
+    TYPE left_type, right_type;
     
     // Analyse la première expression simple
-    SimpleExpression();
+    left_type = SimpleExpression();
     
     // Si on trouve un opérateur relationnel, on continue l'analyse
     if(current == RELOP){
         oprel = RelationalOperator();      // Sauvegarde l'opérateur
-        SimpleExpression();                // Analyse la deuxième expression simple
+        right_type = SimpleExpression();   // Analyse la deuxième expression simple
+        
+        // Vérification de type - les deux expressions doivent être du même type
+        if (left_type != right_type) {
+            Error("Les opérandes des opérateurs de comparaison doivent être du même type");
+        }
+        
+        // Le résultat d'une comparaison est toujours de type BOOLEAN
+        left_type = BOOLEAN;
         
         // Génération du code assembleur pour la comparaison
         cout << "\tpop %rax" << endl;      // Récupère le deuxième opérande
@@ -432,11 +508,15 @@ void Expression(void){
         // Étiquette pour continuer l'exécution
         cout << "Suite" << TagNumber << ":" << endl;
     }
+    
+    // Return the type - BOOLEAN if we had a relational operator, otherwise the left_type
+    return left_type;
 }
 
 // Analyse une instruction d'assignation: Identifier ":=" Expression
 void AssignementStatement(void){
     string variable;
+    TYPE expr_type;
     
     // Vérifie si le premier token est un identifiant
     if(current != ID)
@@ -462,7 +542,13 @@ void AssignementStatement(void){
     current = (TOKEN) lexer->yylex();
     
     // Analyse l'expression à droite de l'assignation
-    Expression();
+    expr_type = Expression();
+    
+    // Vérification de type - la variable et l'expression doivent être du même type
+    // Pour l'instant, toutes les variables sont de type UNSIGNED_INT
+    if (expr_type != UNSIGNED_INT) {
+        Error("Type incompatible dans l'assignation");
+    }
     
     // Génère le code pour stocker le résultat dans la variable
     cout << "\tpop " << variable << endl;
@@ -471,12 +557,18 @@ void AssignementStatement(void){
 // Analyse une instruction conditionnelle: "if" Expression "then" Statement ["else" Statement]
 void IfStatement(void){
     unsigned long tag = ++TagNumber; // Étiquette unique pour ce if
+    TYPE expr_type;
     
     // Consomme "if"
     current = (TOKEN) lexer->yylex();
     
     // Analyse de l'expression conditionnelle
-    Expression();
+    expr_type = Expression();
+    
+    // Vérification de type - l'expression conditionnelle doit être de type BOOLEAN
+    if (expr_type != BOOLEAN) {
+        Error("L'expression dans une instruction 'if' doit être de type booléen");
+    }
     
     // Génération du code pour le test
     cout << "\tpop %rax" << endl;             // Récupère la valeur de la condition
@@ -511,6 +603,7 @@ void IfStatement(void){
 // Analyse une boucle while: "while" Expression "do" Statement
 void WhileStatement(void){
     unsigned long tag = ++TagNumber; // Étiquette unique pour cette boucle
+    TYPE expr_type;
     
     // Consomme "while"
     current = (TOKEN) lexer->yylex();
@@ -519,7 +612,12 @@ void WhileStatement(void){
     cout << "While" << tag << ":" << endl;
     
     // Analyse de l'expression conditionnelle
-    Expression();
+    expr_type = Expression();
+    
+    // Vérification de type - l'expression conditionnelle doit être de type BOOLEAN
+    if (expr_type != BOOLEAN) {
+        Error("L'expression dans une instruction 'while' doit être de type booléen");
+    }
     
     // Génération du code pour le test
     cout << "\tpop %rax" << endl;              // Récupère la valeur de la condition
@@ -541,10 +639,11 @@ void WhileStatement(void){
     cout << "EndWhile" << tag << ":" << endl;
 }
 
-// Analyse une boucle for: "for" AssignementStatement "to" Expression "do" Statement
+// Analyse une boucle for: "for" Letter ":=" Expression "to" Expression "do" Statement
 void ForStatement(void){
     unsigned long tag = ++TagNumber; // Étiquette unique pour cette boucle
     string control_var; // Variable de contrôle de la boucle
+    TYPE init_expr_type, limit_expr_type;
     
     // Consomme "for"
     current = (TOKEN) lexer->yylex();
@@ -571,10 +670,12 @@ void ForStatement(void){
     current = (TOKEN) lexer->yylex();
     
     // Analyse l'expression initiale
-    Expression();
+    init_expr_type = Expression();
     
-    // Stocke la valeur initiale dans la variable de contrôle
-    cout << "\tpop " << control_var << endl;
+    // Vérification de type - l'expression initiale doit être de type UNSIGNED_INT
+    if (init_expr_type != UNSIGNED_INT) {
+        Error("L'expression d'initialisation dans une boucle 'for' doit être de type entier");
+    }
     
     // Vérifie la présence du "to"
     if(current != TO) // <-- Fixed to use TO token
@@ -582,10 +683,16 @@ void ForStatement(void){
     current = (TOKEN) lexer->yylex();
     
     // Début de la boucle
+
     cout << "For" << tag << ":" << endl;
     
     // Analyse l'expression finale (limite)
-    Expression();
+    limit_expr_type = Expression();
+    
+    // Vérification de type - l'expression limite doit être de type UNSIGNED_INT
+    if (limit_expr_type != UNSIGNED_INT) {
+        Error("L'expression limite dans une boucle 'for' doit être de type entier");
+    }
     
     // Compare la variable de contrôle avec la limite
     cout << "\tpop %rax" << endl;                // Récupère la limite
@@ -698,6 +805,9 @@ void Program(void){
     // Analyse la partie instruction
     StatementPart();    
 }
+
+
+
 
 // =========================================================================
 // SECTION 7: FONCTION PRINCIPALE
