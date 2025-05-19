@@ -58,7 +58,11 @@ unknown [^\"A-Za-z0-9 \n\r\t\(\)\<\>\=\!\%\&\|\}\-\;\.]+
 "DOUBLE"    return DOUBLE_TYPE;
 "CHAR"      return CHAR_TYPE; 
 ":"         return COLON; 
-
+"CASE"      return CASE;
+"OF"        return OF;
+"REPEAT"    return REPEAT;
+"UNTIL"     return UNTIL;
+"CONST"     return CONST;
 
 
 "TRUE"      return TRUE_LIT; 

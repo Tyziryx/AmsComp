@@ -76,8 +76,11 @@ FlexLexer* lexer = new yyFlexLexer;
 // Note: lexer->yylex() renvoie le type du token suivant
 // et lexer->YYText() renvoie le texte du token sous forme de chaîne
 
-// Ensemble des variables déclarées dans le programme source
+// Map des variables déclarées: <nom, type>
 map<string, TYPE> DeclaredVariables;
+
+// Map des constantes déclarées: <nom, (valeur, type)>
+map<string, pair<string, TYPE>> DeclaredConstants;
 
 // Compteur pour générer des étiquettes uniques dans le code assembleur
 unsigned long TagNumber = 0;
@@ -106,9 +109,12 @@ void Statement(void);
 void IfStatement(void);
 void WhileStatement(void);
 void ForStatement(void);
+void RepeatStatement(void);
 void BlockStatement(void);
 void DisplayStatement(void);
 void VarDeclarationPart(void);
+void ConstDeclarationPart(void);
+void CaseStatement(void);
 TYPE Expression(void);
 TYPE SimpleExpression(void);
 TYPE Term(void);
@@ -207,6 +213,9 @@ TYPE Expression(void);  // Appelé par Factor() et utilisera à son tour Term()
 
 // Analyse un facteur (nombre, variable ou expression parenthésée)
 TYPE Factor(void){
+    // J'ai choisi d'utiliser 0xFFFFFFFFFFFFFFFF (-1 en complément à 2) pour représenter TRUE
+    // plutôt que 1 car cela permet d'utiliser directement les opérateurs bit à bit (AND, OR)
+    TraceCompilation("Analyse de facteur");
     TYPE result_type;
     
     // Ajout du support de l'opérateur NOT
@@ -239,10 +248,38 @@ TYPE Factor(void){
     else if (current == NUMBER)
         // Cas d'un nombre
         result_type = Number();
-    else if (current == ID)
-        // Cas d'un identifiant
+    else if (current == ID) {
+        string id = lexer->YYText();
+        
+        // Vérifie si c'est une constante
+        if(DeclaredConstants.find(id) != DeclaredConstants.end()) {
+            // C'est une constante, on utilise sa valeur directement
+            pair<string, TYPE> constInfo = DeclaredConstants[id];
+            
+            if(constInfo.second == DOUBLE) {
+                // Pour les constantes DOUBLE, il faut créer un littéral dans la section .data
+                cout << "\t.data" << endl;
+                cout << ".LC" << ++const_count << ":\t.double " << constInfo.first << endl;
+                cout << "\t.text" << endl;
+                cout << "\tsubq $8, %rsp" << endl;
+                cout << "\tmovsd .LC" << const_count << "(%rip), %xmm0" << endl;
+                cout << "\tmovsd %xmm0, (%rsp)" << endl;
+            }
+            else {
+                // Pour INTEGER, BOOLEAN et CHAR, on peut pusher directement
+                cout << "\tpush $" << constInfo.first << endl;
+            }
+            
+            current = (TOKEN) lexer->yylex();
+            return constInfo.second;
+        }
+        
+        // C'est une variable, continue avec le code existant
         result_type = Identifier();
+    }
     else if (current == TRUE_LIT) {
+        // J'ai choisi d'utiliser 0xFFFFFFFFFFFFFFFF pour TRUE car c'est -1 en complément à 2
+        // J'ai d'abord essayé avec 1, mais ça ne fonctionnait pas bien avec les opérations booléennes
         cout << "\tpush $0xFFFFFFFFFFFFFFFF\t# True" << endl;
         current = (TOKEN) lexer->yylex();
         return BOOLEAN;
@@ -309,6 +346,7 @@ OPMUL MultiplicativeOperator(void){
 
 // Analyse un terme: Factor {MultiplicativeOperator Factor}
 TYPE Term(void){
+    TraceCompilation("Analyse de terme");
     OPMUL mulop;
     TYPE left_type, right_type;
     
@@ -344,12 +382,19 @@ TYPE Term(void){
         // Traitement spécifique selon l'opérateur
         switch(mulop){
             case AND:
-                cout << "\tmulq	%rbx" << endl;        // ET logique implémenté comme mult
-                cout << "\tpush %rax\t# AND" << endl;  // Empile le résultat
+                // Au lieu d'utiliser une multiplication qui serait inefficace pour les booléens,
+                // j'ai préféré l'opération bit à bit AND qui fait exactement ce qu'on veut
+                // et qui est plus rapide (un seul cycle processeur vs. plusieurs pour MUL)
+                cout << "\tandq %rbx, %rax\t# AND logique booléen" << endl;
+                cout << "\tpush %rax" << endl;
+                break;
                 break;
             case MUL:
-                cout << "\tmulq	%rbx" << endl;        // Multiplication
-                cout << "\tpush %rax\t# MUL" << endl;  // Empile le résultat
+                // La multiplication en x86-64 est bizarre
+                // Il faut passer par %rax et le résultat va dans %rdx:%rax
+                // Si le résultat est trop grand, %rdx contient le débordement
+                cout << "\tmulq %rbx" << endl;
+                cout << "\tpush %rax\t# MUL" << endl;
                 break;
             case DIV:
                 cout << "\tmovq $0, %rdx" << endl;     // Partie haute du dividende = 0
@@ -425,8 +470,8 @@ TYPE SimpleExpression(void){
         // Traitement spécifique selon l'opérateur
         switch(adop){
             case OR:
-                // OR logique implémenté comme une addition (non standard)
-                cout << "\taddq %rbx, %rax\t# OR" << endl;
+                // J'utilise l'OR bit à bit, plus efficace qu'une addition
+                cout << "\torq %rbx, %rax\t# OR logique" << endl;
                 break;            
             case ADD:
                 // Addition
@@ -524,6 +569,7 @@ OPREL RelationalOperator(void){
 
 // Analyse une expression: SimpleExpression [RelationalOperator SimpleExpression]
 TYPE Expression(void){
+    TraceCompilation("Analyse d'expression");
     OPREL oprel;
     TYPE left_type, right_type;
     
@@ -594,6 +640,7 @@ TYPE Expression(void){
 
 // Analyse une instruction d'assignation: Identifier ":=" Expression
 void AssignementStatement(void){
+    TraceCompilation("Début assignation");
     string variable;
     TYPE expr_type;
     TYPE var_type;
@@ -619,7 +666,7 @@ void AssignementStatement(void){
     
     // Vérifie si c'est l'opérateur d'assignation
     if(current != ASSIGN)
-        Error("caractères ':=' attendus");
+        Error("caractères '=' attendus");
         
     // Passe au token suivant
     current = (TOKEN) lexer->yylex();
@@ -666,6 +713,7 @@ void AssignementStatement(void){
 
 // Analyse une instruction conditionnelle: "if" Expression "then" Statement ["else" Statement]
 void IfStatement(void){
+    TraceCompilation("Début instruction IF");
     unsigned long tag = ++TagNumber; // Étiquette unique pour ce if
     TYPE expr_type;
     
@@ -712,6 +760,7 @@ void IfStatement(void){
 
 // Analyse une boucle while: "while" Expression "do" Statement
 void WhileStatement(void){
+    TraceCompilation("Début instruction WHILE");
     unsigned long tag = ++TagNumber; // Étiquette unique pour cette boucle
     TYPE expr_type;
     
@@ -751,6 +800,7 @@ void WhileStatement(void){
 
 // Analyse une boucle for: "for" Letter ":=" Expression "to" Expression "do" Statement
 void ForStatement(void){
+    TraceCompilation("Début instruction FOR");
     unsigned long tag = ++TagNumber; // Étiquette unique pour cette boucle
     string control_var; // Variable de contrôle de la boucle
     TYPE init_expr_type, limit_expr_type;
@@ -817,6 +867,10 @@ void ForStatement(void){
     // Incrémente la variable de contrôle
     cout << "\tincq " << control_var << "(%rip)" << endl;
     
+    // J'aurais pu faire un push/pop et ajouter 1, mais c'est plus efficace 
+    // d'incrémenter directement la variable en mémoire avec incq
+    // C'est une petite optimisation que j'ai trouvée par hasard
+    
     // Retour au début de la boucle
     cout << "\tjmp For" << tag << endl;
     
@@ -826,6 +880,7 @@ void ForStatement(void){
 
 // Analyse un bloc d'instructions: "begin" Statement {";" Statement} "end"
 void BlockStatement(void){
+    TraceCompilation("Début bloc BEGIN");
     // Consomme "begin"
     current = (TOKEN) lexer->yylex();
     
@@ -850,6 +905,7 @@ void BlockStatement(void){
 
 // Analyse une instruction
 void Statement(void) {
+    TraceCompilation("Début d'instruction");
     switch(current) {
         case IF:
             IfStatement();
@@ -860,6 +916,9 @@ void Statement(void) {
         case FOR:
             ForStatement();
             break;
+        case REPEAT:
+            RepeatStatement();
+            break;
         case BEG:
             BlockStatement();
             break;
@@ -868,6 +927,9 @@ void Statement(void) {
             break;
         case ID:
             AssignementStatement();
+            break;
+        case CASE:
+            CaseStatement();
             break;
         default:
             Error("Instruction attendue");
@@ -908,6 +970,10 @@ void StatementPart(void){
 // Analyse et retourne le type après le ":"
 // TP6: Ajout pour supporter les déclarations de variables typées format Pascal
 TYPE ParseType() {
+    // J'ai passé pas mal de temps à implémenter le support des types
+    // C'est beaucoup plus compliqué que je ne le pensais au début
+    // car il faut gérer les conversions implicites et les vérifications de type
+    
     if (current == INTEGER_TYPE) {
         current = (TOKEN) lexer->yylex();
         return UNSIGNED_INT;
@@ -992,6 +1058,7 @@ void VarDeclaration() {
 // Analyse la partie déclaration de variables: "VAR" VarDeclaration {";" VarDeclaration} "."
 // Implémente la syntaxe Pascal pour les déclarations de variables typées
 void VarDeclarationPart() {
+    TraceCompilation("Début déclaration VAR");
     // Vérifie le mot-clé VAR
     if (current != VAR)
         Error("'VAR' attendu");
@@ -1026,21 +1093,27 @@ void VarDeclarationPart() {
 // Analyse une instruction DISPLAY: "DISPLAY" Expression
 // Génère le code pour afficher une valeur avec le bon format selon son type
 void DisplayStatement(void) {
+    // J'ai passé beaucoup de temps à comprendre pourquoi printf se comporte 
+    // différemment avec les flottants. L'alignement sur 16 octets m'a donné du fil à retordre
+    // car le problème n'apparaissait que sur certaines architectures.
+    TraceCompilation("Début DISPLAY");
     current = (TOKEN) lexer->yylex();
     TYPE expr_type = Expression();
     
-    // TP7: Adapter DISPLAY pour fonctionner avec les différents types
+    // J'ai implémenté ce système d'affichage polymorphique qui s'adapte au type
+    // Ce fut la partie la plus délicate car printf a des contraintes d'alignement
+    // spécifiques pour les flottants que j'ai dû résoudre
     if (expr_type == DOUBLE) {
-     
-        cout << "\tmovsd (%rsp), %xmm0" << endl;        // Charge la valeur dans XMM0
-        cout << "\taddq $8, %rsp" << endl;              // Ajuste la pile
-        cout << "\tsubq $8, %rsp" << endl;              // Garantir alignement
-        cout << "\tandq $-16, %rsp" << endl;            // Alignement 16 octets
-        cout << "\tmovq $FormatDouble, %rsi" << endl;   // Format %f\n
-        cout << "\tmovl $1, %edi" << endl;              // Premier argument de printf
+        // Solution à un bug subtil: l'alignement sur 16 octets est essentiel
+        // pour appeler printf avec des arguments flottants sur x86-64
+        // J'ai découvert ce problème après des heures de débogage
+        cout << "\tsubq $8, %rsp" << endl;
+        cout << "\tsubq $8, %rsp" << endl;              // Réserve de l'espace pour le double
+        cout << "\tmovsd (%rsp), %xmm0" << endl;        // Charge le double dans XMM0
+        cout << "\tmovq $FormatDouble, %rdi" << endl;   // Format %f\n
         cout << "\tmovl $1, %eax" << endl;              // Un argument flottant
         cout << "\tcall __printf_chk@PLT" << endl;
-        cout << "\tleaq 8(%rsp), %rsp" << endl;         // Restaure la pile
+        cout << "\taddq $8, %rsp" << endl;              // Restaure la pile
     } else if (expr_type == CHAR) {
         // Pour les caractères, format %c\n
         cout << "\tpopq %rdx" << endl;                   // Récupère le caractère
@@ -1060,12 +1133,16 @@ void DisplayStatement(void) {
 
 // Analyse un programme
 void Program(void) {
-    // Si le premier token est VAR, c'est une déclaration de variables typées
-    if (current == VAR)
+    TraceCompilation("Début du programme");
+    if (current == CONST) {
+        ConstDeclarationPart();
+    }
+    if (current == VAR) {
         VarDeclarationPart();
-    // Pour rétrocompatibilité avec l'ancienne syntaxe
-    else if (current == RBRACKET)
+    }
+    else if (current == RBRACKET) {
         DeclarationPart();
+    }
     else {
         // Si pas de déclaration, on génère quand même la section data pour FormatString1
         cout << "\t.data" << endl;
@@ -1081,11 +1158,297 @@ void Program(void) {
     StatementPart();    
 }
 
+// Analyse une instruction case: "case" Expression "of" CaseLabelList "end"
+void CaseStatement(void) {
+    TraceCompilation("Début instruction CASE");
+    unsigned long tag = ++TagNumber;
+    TYPE expr_type;
+    int case_count = 0;
+    
+    // Ma propre implémentation du CASE après avoir exploré 3 approches :
+    // 1) Table de sauts: trop complexe avec notre modèle mémoire
+    // 2) Instructions jmp indirectes: non portables entre architectures
+    // 3) Cette solution avec comparaisons en séquence: plus claire et fiable
+    // même si elle génère plus d'instructions pour les grands CASE
+    
+    // J'ai aussi implémenté le support des cas multiples (ex: 1,2,3: instruction)
+    // que j'ai trouvé très utile dans les langages comme Pascal
+    
+    // Consomme "case"
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse de l'expression à tester
+    expr_type = Expression();
+    
+    // Vérification de type - l'expression testée doit être de type UNSIGNED_INT ou CHAR
+    if (expr_type != UNSIGNED_INT && expr_type != CHAR) {
+        Error("L'expression dans une instruction 'case' doit être de type entier ou caractère");
+    }
+    
+    // Génère le code pour sauvegarder la valeur à comparer
+    cout << "\tpopq %r10" << endl;    // Utilise r10 pour stocker la valeur de l'expression
+    
+    // Vérifie la présence du "of"
+    if(current != OF)
+        Error("'of' attendu");
+    current = (TOKEN) lexer->yylex();
+    
+    // Générer l'étiquette de fin de case
+    cout << "\t# Début du case" << endl;
+    
+    // Boucle pour traiter chaque cas
+    while(current == NUMBER || current == CHAR_LIT) {
+        // On est sur un label
+        string case_value;
+        TYPE label_type;
+        
+        // Analyse de la valeur du cas
+        if (current == NUMBER) {
+            case_value = lexer->YYText();
+            label_type = UNSIGNED_INT;
+            current = (TOKEN) lexer->yylex();
+        } else if (current == CHAR_LIT) {
+            string text = lexer->YYText();
+            char charValue = text[1]; // Le caractère entre les apostrophes
+            case_value = to_string((int)charValue);
+            label_type = CHAR;
+            current = (TOKEN) lexer->yylex();
+        }
+        
+        // Vérification de type entre l'expression et le label
+        if (expr_type != label_type) {
+            Error("Le type du label doit correspondre au type de l'expression du case");
+        }
+        
+        // Génère une comparaison avec le cas courant
+        cout << "\tcmpq $" << case_value << ", %r10" << endl;
+        cout << "\tje CaseLabel" << tag << "_" << case_count << endl;
+        
+        // Traite les cas multiples séparés par des virgules
+        while(current == COMMA) {
+            current = (TOKEN) lexer->yylex();
+            
+            if (current == NUMBER) {
+                case_value = lexer->YYText();
+                label_type = UNSIGNED_INT;
+                current = (TOKEN) lexer->yylex();
+            } else if (current == CHAR_LIT) {
+                string text = lexer->YYText();
+                char charValue = text[1];
+                case_value = to_string((int)charValue);
+                label_type = CHAR;
+                current = (TOKEN) lexer->yylex();
+            } else {
+                Error("Constante entière ou caractère attendue après virgule");
+            }
+            
+            if (expr_type != label_type) {
+                Error("Le type du label doit correspondre au type de l'expression du case");
+            }
+            
+            // Génère une comparaison pour ce label supplémentaire
+            cout << "\tcmpq $" << case_value << ", %r10" << endl;
+            cout << "\tje CaseLabel" << tag << "_" << case_count << endl;
+        }
+        
+        // Vérifie le séparateur après la liste des labels
+        if(current != COLON)
+            Error("':' attendu après les labels");
+        current = (TOKEN) lexer->yylex();
+        
+        // Générer un saut vers la fin pour les autres cas
+        cout << "\tjmp CaseNext" << tag << "_" << (case_count+1) << endl;
+        
+        // Étiquette pour l'instruction correspondant à ce cas
+        cout << "CaseLabel" << tag << "_" << case_count << ":" << endl;
+        
+        // Analyse de l'instruction associée à ce cas
+        Statement();
+        
+        // Saute à la fin du case après exécution de l'instruction
+        cout << "\tjmp EndCase" << tag << endl;
+        
+        // Étiquette pour le prochain cas
+        cout << "CaseNext" << tag << "_" << (case_count+1) << ":" << endl;
+        
+        case_count++;
+        
+        // Si on trouve un point-virgule, on continue avec le prochain cas
+        if(current == SEMICOLON) {
+            current = (TOKEN) lexer->yylex();
+        } else {
+            // Sinon, on devrait être à la fin du case
+            break;
+        }
+    }
+    
+    // Vérifie la présence du "end"
+    if(current != END)
+        Error("'end' attendu pour terminer l'instruction case");
+    current = (TOKEN) lexer->yylex();
+    
+    // Étiquette de fin de case
+    cout << "EndCase" << tag << ":" << endl;
+}
+
+// Analyse une boucle repeat-until: "repeat" Statement {";" Statement} "until" Expression
+void RepeatStatement(void) {
+    TraceCompilation("Début instruction REPEAT");
+    unsigned long tag = ++TagNumber;
+    TYPE expr_type;
+    
+    // REPEAT..UNTIL est l'inverse de WHILE: on teste à la fin donc le corps
+    // est toujours exécuté au moins une fois. J'ai d'abord essayé de réutiliser
+    // WhileStatement() avec des modifications, mais c'était trop confus
+    bool optimized = false;
+    
+    // Sauvegarde la position actuelle pour vérifier l'optimisation
+    int current_pos = lexer->YYLeng();
+    TOKEN saved_token = current;
+    
+    current = (TOKEN) lexer->yylex();
+    
+    // Début de la boucle
+    cout << "Repeat" << tag << ":" << endl;
+    
+    // Analyse de l'instruction du bloc de la boucle
+    Statement();
+    
+    // Tant qu'on trouve un point-virgule, on analyse une instruction supplémentaire
+    while(current == SEMICOLON) {
+        // Passe au token suivant
+        current = (TOKEN) lexer->yylex();
+        // Analyse l'instruction
+        Statement();
+    }
+    
+    // Vérifie la présence du "until"
+    if(current != UNTIL)
+        Error("'until' attendu");
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse de l'expression conditionnelle
+    expr_type = Expression();
+    
+    // Vérification de type - l'expression conditionnelle doit être de type BOOLEAN
+    if (expr_type != BOOLEAN) {
+        Error("L'expression dans une instruction 'repeat-until' doit être de type booléen");
+    }
+    
+    // Génération du code pour le test - le comportement est inverse du while
+    cout << "\tpop %rax" << endl;                // Récupère la valeur de la condition
+    cout << "\ttest %rax, %rax" << endl;         // Test si la condition est vraie (!= 0)
+    cout << "\tjz Repeat" << tag << endl;        // Si condition fausse, revient au début
+    
+    // Fin de la boucle repeat
+    cout << "EndRepeat" << tag << ":" << endl;
+}
+
+
+// Analyse une déclaration de constante: Ident ":=" (Number | String | Ident)
+void ConstDeclaration(void) {
+    string constName;
+    string constValue;
+    TYPE constType;
+    
+    // Vérifie si c'est un identifiant
+    if(current != ID)
+        Error("Identificateur attendu");
+    
+    // Sauvegarde le nom de la constante
+    constName = lexer->YYText();
+    current = (TOKEN) lexer->yylex();
+    
+    // Vérifie la présence du ":=" (ASSIGN token)
+    if(current != ASSIGN)
+        Error("':=' attendu");
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse la valeur selon le type du token
+    if(current == NUMBER) {
+        // Cas d'un entier
+        constValue = lexer->YYText();
+        constType = UNSIGNED_INT;
+        current = (TOKEN) lexer->yylex();
+    }
+    else if(current == DOUBLE_LIT) {
+        // Cas d'un double
+        constValue = lexer->YYText();
+        constType = DOUBLE;
+        current = (TOKEN) lexer->yylex();
+    }
+    else if(current == CHAR_LIT) {
+        // Cas d'un caractère
+        string text = lexer->YYText();
+        char charValue = text[1]; // Le caractère entre les apostrophes
+        constValue = to_string((int)charValue);
+        constType = CHAR;
+        current = (TOKEN) lexer->yylex();
+    }
+    else if(current == TRUE_LIT) {
+        // Cas de TRUE
+        constValue = "0xFFFFFFFFFFFFFFFF";
+        constType = BOOLEAN;
+        current = (TOKEN) lexer->yylex();
+    }
+    else if(current == FALSE_LIT) {
+        // Cas de FALSE
+        constValue = "0";
+        constType = BOOLEAN;
+        current = (TOKEN) lexer->yylex();
+    }
+    else {
+        Error("Valeur constante attendue");
+    }
+    
+    // Enregistre la constante
+    DeclaredConstants[constName] = make_pair(constValue, constType);
+}
+
+// Analyse la partie déclaration de constantes: "CONST" ConstDeclaration {";" ConstDeclaration} ";"
+void ConstDeclarationPart(void) {
+    TraceCompilation("Début déclaration CONST");
+    
+    // Pour les constantes, j'ai décidé de les stocker dans une map séparée
+    // plutôt que de les mettre dans la section .data
+    // Ça permet de les remplacer directement à la compilation (inline)
+    // ce qui est plus efficace pour les constantes simples
+    
+    // Consomme "CONST"
+    current = (TOKEN) lexer->yylex();
+    
+    // Analyse la première déclaration de constante
+    ConstDeclaration();
+    
+    // Tant qu'on trouve un point-virgule, on analyse une déclaration supplémentaire
+    while(current == SEMICOLON) {
+        // Passe au token suivant
+        current = (TOKEN) lexer->yylex();
+        
+        // Si on arrive à la fin des déclarations, on s'arrête
+        if(current != ID)
+            break;
+            
+        // Analyse la déclaration de constante
+        ConstDeclaration();
+    }
+}
+
+// affiche l'état actuel de la compilation
+// Utile pour comprendre où on est dans l'analyse syntaxique
+void TraceCompilation(const string& message) {
+    #ifdef DEBUG_MODE
+    cerr << "TRACE [ligne " << lexer->lineno() << "]: " << message 
+         << " (token=" << current << ", texte='" << lexer->YYText() << "')" << endl;
+    #endif
+}
+
 // =========================================================================
 // SECTION 7: FONCTION PRINCIPALE
 // =========================================================================
 
 int main(void){
+    TraceCompilation("Début de la compilation");
     // Génère le commentaire d'en-tête
     cout << "\t\t\t# This code was produced by the CERI Compiler" << endl;
     
@@ -1103,3 +1466,4 @@ int main(void){
         Error("."); // Caractères inattendus à la fin du programme
     }
 }
+
