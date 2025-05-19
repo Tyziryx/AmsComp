@@ -32,6 +32,7 @@
 #include <vector>
 using namespace std;
 
+// TP2: Ajout des opérateurs relationnels et booléens
 // =========================================================================
 // SECTION 2: CONSTANTES ET TYPES
 // =========================================================================
@@ -80,6 +81,7 @@ map<string, TYPE> DeclaredVariables;
 
 // Compteur pour générer des étiquettes uniques dans le code assembleur
 unsigned long TagNumber = 0;
+unsigned long const_count = 0; // Compteur pour les constantes
 
 // =========================================================================
 // SECTION 4: FONCTIONS UTILITAIRES
@@ -154,21 +156,50 @@ TYPE Identifier(void) {
         exit(-1);
     }
     
-    cout << "\tpush " << varName << endl;
-    current = (TOKEN) lexer->yylex();
+    // Récupère le type de la variable
+    TYPE var_type = DeclaredVariables[varName];
     
-    // Retourne le type de la variable
-    return DeclaredVariables[varName];
+    // TP7: Ajout du support pour les types DOUBLE et CHAR
+    // Génère le code approprié selon le type
+    if (var_type == DOUBLE) {
+        // Après 3h de galère, j'ai enfin compris qu'on ne peut pas utiliser push/pop 
+        // pour les flottants! Il faut utiliser les registres XMM :(
+        cout << "\tsubq $8, %rsp" << endl;                  // Réserve l'espace sur la pile (8 octets)
+        cout << "\tmovsd " << varName << "(%rip), %xmm0" << endl; // Charge le double dans XMM0
+        cout << "\tmovsd %xmm0, (%rsp)" << endl;            // Stocke sur la pile
+    } else if (var_type == CHAR) {
+        // Pour les caractères (1 octet), on utilise movsbl pour étendre le signe
+        // et convertir en entier 64 bits pour manipulation sur la pile
+        // Note: J'ai mis du temps à comprendre pourquoi on passait par %eax...
+        cout << "\tmovsbl " << varName << "(%rip), %eax" << endl;
+        cout << "\tpushq %rax" << endl;                     // Empile l'entier 64 bits
+    } else {
+        // Pour les entiers et booléens (64 bits)
+        cout << "\tpushq " << varName << "(%rip)" << endl;  // Utilise l'adressage RIP-relatif
+    }
+    
+    current = (TOKEN) lexer->yylex();
+    return var_type;
 }
 
 // Traite un nombre et génère le code pour l'empiler
-TYPE Number(void){
-    // Génère une instruction pour pousser la valeur littérale sur la pile
-    // Note: le $ indique une valeur immédiate en assembleur x86
-    cout << "\tpush $" << atoi(lexer->YYText()) << endl;
-    // Passe au token suivant
-    current = (TOKEN) lexer->yylex();
-    return UNSIGNED_INT;
+TYPE Number(void) {
+    // TP7: Ajout de la détection de nombres flottants (avec point décimal)
+    // Déterminer si c'est un entier ou un flottant
+    string text = lexer->YYText();
+    
+    if (text.find('.') != string::npos) {
+        // Nombre à virgule flottante - TD de jeudi nous a aidé pour cette partie
+        cout << "\tpushq $" << strtod(text.c_str(), NULL) << "\t# Double value" << endl;
+        current = (TOKEN) lexer->yylex();
+        return DOUBLE;
+    } 
+    else {
+        // Entier
+        cout << "\tpush $" << atoi(text.c_str()) << endl;
+        current = (TOKEN) lexer->yylex();
+        return UNSIGNED_INT;
+    }
 }
 
 // Déclaration anticipée: Expression sera définie plus tard
@@ -220,6 +251,32 @@ TYPE Factor(void){
         cout << "\tpush $0\t# False" << endl;
         current = (TOKEN) lexer->yylex();
         return BOOLEAN;
+    }
+    else if (current == DOUBLE_LIT) {
+        // TP7: Support des littéraux DOUBLE (ex: 3.14159)
+        // Merci au prof pour l'aide sur cette partie
+        double value = atof(lexer->YYText());
+        
+        // Enregistrer la valeur dans la section .data
+        cout << "\t.data" << endl;
+        cout << ".LC" << ++const_count << ":\t.double " << value << endl;
+        cout << "\t.text" << endl;
+        
+        // Générer le code pour charger la valeur double sur la pile
+        cout << "\tsubq $8, %rsp" << endl;
+        cout << "\tmovsd .LC" << const_count << "(%rip), %xmm0" << endl;
+        cout << "\tmovsd %xmm0, (%rsp)" << endl;
+        
+        current = (TOKEN) lexer->yylex();
+        return DOUBLE;
+    }
+    else if (current == CHAR_LIT) {
+        // Récupérer le caractère entre les apostrophes
+        string text = lexer->YYText();
+        char charValue = text[1]; // Le caractère est à l'index 1 (entre les apostrophes)
+        cout << "\tpush $" << (int)charValue << endl; // Convertit le caractère en son code ASCII
+        current = (TOKEN) lexer->yylex();
+        return CHAR; // Retourne le type CHAR
     }
     else {
         Error("'(' ou chiffre ou lettre attendue");
@@ -570,13 +627,41 @@ void AssignementStatement(void){
     // Analyse l'expression à droite de l'assignation
     expr_type = Expression();
     
+    // TP7: Conversion automatique entre types
     // Vérification de type - la variable et l'expression doivent être du même type
     if (expr_type != var_type) {
-        Error("Type incompatible dans l'assignation");
+        // Autoriser certaines conversions automatiques
+        if ((var_type == DOUBLE && expr_type == UNSIGNED_INT) ||
+            (var_type == CHAR && expr_type == UNSIGNED_INT)) {
+            // Conversion autorisée - c'est pratique ça!
+        } else {
+            Error("Type incompatible dans l'assignation");
+        }
     }
     
+    // TP7: Génération de code différente selon le type
     // Génère le code pour stocker le résultat dans la variable
-    cout << "\tpop " << variable << endl;
+    if (var_type == DOUBLE) {
+        if (expr_type == UNSIGNED_INT) {
+            // Conversion explicite INTEGER → DOUBLE
+            cout << "\tpopq %rax" << endl;                    // Récupère l'entier
+            cout << "\tcvtsi2sdq %rax, %xmm0" << endl;        // Convertit l'entier en double
+            cout << "\tmovsd %xmm0, " << variable << "(%rip)" << endl;  // Stocke le double
+        } else {
+            // Pour les expressions déjà de type DOUBLE
+            cout << "\tmovsd (%rsp), %xmm0" << endl;
+            cout << "\taddq $8, %rsp" << endl;
+            cout << "\tmovsd %xmm0, " << variable << "(%rip)" << endl;
+        }
+    } else if (var_type == CHAR) {
+        // Pour les caractères, stockage d'un seul octet
+        // C'est là qu'on se rend compte que %al est les 8 bits de poids faible de %rax
+        cout << "\tpopq %rax" << endl;
+        cout << "\tmovb %al, " << variable << "(%rip)" << endl;
+    } else {
+        // Pour les entiers et booléens
+        cout << "\tpopq " << variable << "(%rip)" << endl;
+    }
 }
 
 // Analyse une instruction conditionnelle: "if" Expression "then" Statement ["else" Statement]
@@ -697,18 +782,15 @@ void ForStatement(void){
     // Analyse l'expression initiale
     init_expr_type = Expression();
     
-    // Vérification de type - l'expression initiale doit être de type UNSIGNED_INT
-    if (init_expr_type != UNSIGNED_INT) {
-        Error("L'expression d'initialisation dans une boucle 'for' doit être de type entier");
-    }
-    
+    // Stocke cette valeur dans la variable de contrôle
+    cout << "\tpopq " << control_var << "(%rip)" << endl;
+
     // Vérifie la présence du "to"
-    if(current != TO) // <-- Fixed to use TO token
+    if(current != TO)
         Error("'to' attendu");
     current = (TOKEN) lexer->yylex();
     
     // Début de la boucle
-
     cout << "For" << tag << ":" << endl;
     
     // Analyse l'expression finale (limite)
@@ -720,9 +802,9 @@ void ForStatement(void){
     }
     
     // Compare la variable de contrôle avec la limite
-    cout << "\tpop %rax" << endl;                // Récupère la limite
-    cout << "\tcmpq %rax, " << control_var << endl;   // Compare la variable à la limite
-    cout << "\tjg EndFor" << tag << endl;        // Si variable > limite, sort de la boucle
+    cout << "\tpop %rax" << endl;                     // Récupère la limite
+    cout << "\tcmpq %rax, " << control_var << "(%rip)" << endl;   // Compare la variable à la limite
+    cout << "\tjg EndFor" << tag << endl;             // Si variable > limite, sort de la boucle
     
     // Vérifie la présence du "do"
     if(current != DO)
@@ -733,7 +815,7 @@ void ForStatement(void){
     Statement();
     
     // Incrémente la variable de contrôle
-    cout << "\tincq " << control_var << endl;
+    cout << "\tincq " << control_var << "(%rip)" << endl;
     
     // Retour au début de la boucle
     cout << "\tjmp For" << tag << endl;
@@ -781,7 +863,7 @@ void Statement(void) {
         case BEG:
             BlockStatement();
             break;
-        case DISPLAY:  // Ajoutez ce cas
+        case DISPLAY:
             DisplayStatement();
             break;
         case ID:
@@ -819,54 +901,12 @@ void StatementPart(void){
     current = (TOKEN) lexer->yylex();
 }
 
-// Analyse un programme
-void Program(void) {
-    // Si le premier token est VAR, c'est une déclaration de variables typées
-    if (current == VAR)
-        VarDeclarationPart();
-    // Pour rétrocompatibilité avec l'ancienne syntaxe
-    else if (current == RBRACKET)
-        DeclarationPart();
-    else {
-        // Si pas de déclaration, on génère quand même la section data pour FormatString1
-        cout << "\t.data" << endl;
-        cout << "\t.align 8" << endl;
-    }
-    
-    // Pour l'instruction DISPLAY
-    cout << "FormatString1:\t.string \"%llu\\n\"" << endl;
-    
-    // Analyse la partie instruction
-    StatementPart();    
-}
-
-
-
-
 // =========================================================================
-// SECTION 7: FONCTION PRINCIPALE
+// SECTION 6B: FONCTIONS POUR LE SUPPORT DES TYPES DOUBLE ET CHAR
 // =========================================================================
-
-int main(void){
-    // Génère le commentaire d'en-tête
-    cout << "\t\t\t# This code was produced by the CERI Compiler" << endl;
-    
-    // Lance l'analyse lexicale et syntaxique
-    current = (TOKEN) lexer->yylex();  // Lit le premier token
-    Program();                          // Analyse le programme
-    
-    // Génère le code de terminaison
-    cout << "\tmovq %rbp, %rsp\t\t# Restore the position of the stack's top" << endl;
-    cout << "\tret\t\t\t# Return from main function" << endl;
-    
-    // Vérifie s'il y a des tokens en trop à la fin
-    if(current != FEOF){
-        cerr << "Caractères en trop à la fin du programme : [" << current << "]";
-        Error("."); // Caractères inattendus à la fin du programme
-    }
-}
 
 // Analyse et retourne le type après le ":"
+// TP6: Ajout pour supporter les déclarations de variables typées format Pascal
 TYPE ParseType() {
     if (current == INTEGER_TYPE) {
         current = (TOKEN) lexer->yylex();
@@ -877,16 +917,24 @@ TYPE ParseType() {
         return BOOLEAN;
     } 
     else if (current == DOUBLE_TYPE) {
+        // TP7: Ajout du type DOUBLE
         current = (TOKEN) lexer->yylex();
         return DOUBLE;
     }
+    else if (current == CHAR_TYPE) {
+        // TP7: Ajout du type CHAR
+        // Merci à mon binôme d'avoir ajouté cette partie
+        current = (TOKEN) lexer->yylex();
+        return CHAR;
+    }
     else {
-        Error("Type attendu (INTEGER, BOOLEAN ou DOUBLE)");
-        return UNSIGNED_INT; 
+        Error("Type attendu (INTEGER, BOOLEAN, DOUBLE ou CHAR)");
+        return UNSIGNED_INT; // Never reached because of Error()
     }
 }
 
 // Analyse une déclaration de variables: Ident {"," Ident} ":" Type
+// Permet de déclarer plusieurs variables du même type en une seule ligne
 void VarDeclaration() {
     vector<string> variables; // Liste des variables à déclarer dans ce groupe
     TYPE varType;             // Type de ces variables
@@ -895,7 +943,7 @@ void VarDeclaration() {
     if (current != ID)
         Error("Identificateur attendu");
     
-    // Stocke le premier identifiant en entier, sans découper sur les underscores
+    // Stocke le premier identifiant
     string varName = lexer->YYText();
     variables.push_back(varName);
     current = (TOKEN) lexer->yylex();
@@ -920,14 +968,29 @@ void VarDeclaration() {
     // Analyse le type
     varType = ParseType();
     
+    // TP7: Déclare les variables selon leur type spécifique
     // Déclare toutes les variables avec le même type
     for (const string& var : variables) {
-        cout << var << ":\t.quad 0" << endl;
+        switch (varType) {
+            case DOUBLE:
+                // Pour les doubles, déclare 8 octets initialisés à 0.0
+                cout << var << ":\t.double 0.0" << endl;
+                break;
+            case CHAR:
+                // Pour les caractères, déclare 1 octet initialisé à 0
+                cout << var << ":\t.byte 0" << endl;
+                break;
+            default: // INTEGER et BOOLEAN
+                // Pour les entiers et booléens, déclare 8 octets initialisés à 0
+                cout << var << ":\t.quad 0" << endl;
+                break;
+        }
         DeclaredVariables[var] = varType;
     }
 }
 
 // Analyse la partie déclaration de variables: "VAR" VarDeclaration {";" VarDeclaration} "."
+// Implémente la syntaxe Pascal pour les déclarations de variables typées
 void VarDeclarationPart() {
     // Vérifie le mot-clé VAR
     if (current != VAR)
@@ -961,24 +1024,82 @@ void VarDeclarationPart() {
 }
 
 // Analyse une instruction DISPLAY: "DISPLAY" Expression
+// Génère le code pour afficher une valeur avec le bon format selon son type
 void DisplayStatement(void) {
-    // Consomme le token DISPLAY
     current = (TOKEN) lexer->yylex();
-    
-    // Analyse l'expression à afficher
     TYPE expr_type = Expression();
     
-    // Génère le code pour afficher la valeur
-    cout << "\tpop %rdx" << endl;                 // Récupère la valeur à afficher
-    cout << "\tmovq $FormatString1, %rsi" << endl;// Format d'affichage
-    cout << "\tmovl $1, %edi" << endl;            // Premier argument de printf_chk
-    cout << "\tmovl $0, %eax" << endl;            // Pas d'arguments flottants
-    cout << "\tcall __printf_chk@PLT" << endl;    // Appel à la fonction printf sécurisée
+    // TP7: Adapter DISPLAY pour fonctionner avec les différents types
+    if (expr_type == DOUBLE) {
+     
+        cout << "\tmovsd (%rsp), %xmm0" << endl;        // Charge la valeur dans XMM0
+        cout << "\taddq $8, %rsp" << endl;              // Ajuste la pile
+        cout << "\tsubq $8, %rsp" << endl;              // Garantir alignement
+        cout << "\tandq $-16, %rsp" << endl;            // Alignement 16 octets
+        cout << "\tmovq $FormatDouble, %rsi" << endl;   // Format %f\n
+        cout << "\tmovl $1, %edi" << endl;              // Premier argument de printf
+        cout << "\tmovl $1, %eax" << endl;              // Un argument flottant
+        cout << "\tcall __printf_chk@PLT" << endl;
+        cout << "\tleaq 8(%rsp), %rsp" << endl;         // Restaure la pile
+    } else if (expr_type == CHAR) {
+        // Pour les caractères, format %c\n
+        cout << "\tpopq %rdx" << endl;                   // Récupère le caractère
+        cout << "\tmovq $FormatChar, %rsi" << endl;     // Format %c\n
+        cout << "\tmovl $1, %edi" << endl;
+        cout << "\tmovl $0, %eax" << endl;              // Pas d'arguments flottants
+        cout << "\tcall __printf_chk@PLT" << endl;
+    } else {
+        // Pour les entiers et booléens, format %llu\n
+        cout << "\tpopq %rdx" << endl;                   // Récupère la valeur
+        cout << "\tmovq $FormatString1, %rsi" << endl;  // Format %llu\n
+        cout << "\tmovl $1, %edi" << endl;
+        cout << "\tmovl $0, %eax" << endl;
+        cout << "\tcall __printf_chk@PLT" << endl;
+    }
 }
 
+// Analyse un programme
+void Program(void) {
+    // Si le premier token est VAR, c'est une déclaration de variables typées
+    if (current == VAR)
+        VarDeclarationPart();
+    // Pour rétrocompatibilité avec l'ancienne syntaxe
+    else if (current == RBRACKET)
+        DeclarationPart();
+    else {
+        // Si pas de déclaration, on génère quand même la section data pour FormatString1
+        cout << "\t.data" << endl;
+        cout << "\t.align 8" << endl;
+    }
+    
+    // Chaînes de format pour l'instruction DISPLAY
+    cout << "FormatString1:\t.string \"%llu\\n\"" << endl;  // Pour INTEGER/BOOLEAN
+    cout << "FormatDouble:\t.string \"%f\\n\"" << endl;     // Pour DOUBLE
+    cout << "FormatChar:\t.string \"%c\\n\"" << endl;       // Pour CHAR
+    
+    // Analyse la partie instruction
+    StatementPart();    
+}
 
+// =========================================================================
+// SECTION 7: FONCTION PRINCIPALE
+// =========================================================================
 
-
-
-
-
+int main(void){
+    // Génère le commentaire d'en-tête
+    cout << "\t\t\t# This code was produced by the CERI Compiler" << endl;
+    
+    // Lance l'analyse lexicale et syntaxique
+    current = (TOKEN) lexer->yylex();  // Lit le premier token
+    Program();                          // Analyse le programme
+    
+    // Génère le code de terminaison
+    cout << "\tmovq %rbp, %rsp\t\t# Restore the position of the stack's top" << endl;
+    cout << "\tret\t\t\t# Return from main function" << endl;
+    
+    // Vérifie s'il y a des tokens en trop à la fin
+    if(current != FEOF){
+        cerr << "Caractères en trop à la fin du programme : [" << current << "]";
+        Error("."); // Caractères inattendus à la fin du programme
+    }
+}

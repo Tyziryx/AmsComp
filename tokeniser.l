@@ -24,6 +24,7 @@ ws      [ \t\n\r]+
 alpha   [A-Za-z]
 digit   [0-9]
 number  {digit}+
+double  [0-9]+\.[0-9]*|\.[0-9]+ /* ajout de double pour prendre en compte les "." */
 id	{alpha}({alpha}|{digit}|_)*
 addop	(\+|\-|\|\|)
 mulop	(\*|\/|%|\&\&)
@@ -54,7 +55,8 @@ unknown [^\"A-Za-z0-9 \n\r\t\(\)\<\>\=\!\%\&\|\}\-\;\.]+
 "VAR"       return VAR; 
 "INTEGER"   return INTEGER_TYPE; 
 "BOOLEAN"   return BOOLEAN_TYPE; 
-"DOUBLE"    return DOUBLE_TYPE; 
+"DOUBLE"    return DOUBLE_TYPE;
+"CHAR"      return CHAR_TYPE; 
 ":"         return COLON; 
 
 
@@ -65,7 +67,9 @@ unknown [^\"A-Za-z0-9 \n\r\t\(\)\<\>\=\!\%\&\|\}\-\;\.]+
 {addop}		return ADDOP;
 {mulop}		return MULOP;
 {relop}		return RELOP;
+[0-9]+\.[0-9]*|\.[0-9]+     return DOUBLE_LIT; /* j'ai mis l'instruction au lieu de double car double ne marchait pas */
 {number}	return NUMBER;
+'[^']'      return CHAR_LIT;  // Reconnaît un caractère entre apostrophes
 {id}		return ID;
 {stringconst}	return STRINGCONST;
 "["		return RBRACKET;
