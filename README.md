@@ -3,8 +3,6 @@
 Ce compilateur traduit un sous-ensemble du langage Pascal en assembleur x86-64 exécutable. Il a été développé dans le cadre d'un projet universitaire.
 
 ## Fonctionnalités implémentées
-
-
 ## Mon travail personnel
 
 J'ai personnellement implémenté les composants et fonctionnalités suivants :
@@ -197,7 +195,7 @@ Y
 
 ## Instructions d'utilisation
 
-Pour compiler et exécuter un programme Pascal avec notre compilateur :
+Pour compiler et exécuter un programme Pascal avec le compilateur :
 
 ```bash
 # Compiler un fichier Pascal en assembleur
@@ -222,30 +220,30 @@ gcc -no-pie -o programme programme.s
 
 ## Récit du développement
 
-Le développement de ce compilateur a été un véritable parcours d'apprentissage, avec plusieurs moments mémorables:
+J'ai appris beaucoup de choses en développant ce compilateur. Voici les principales difficultés et réussites que j'ai rencontrées:
 
 ### Les défis rencontrés
 
-- **L'alignement pour les flottants** a été un véritable casse-tête! Je me souviens avoir passé presque deux jours à comprendre pourquoi mon programme crashait aléatoirement lors de l'appel à printf pour les DOUBLE. Le problème venait de l'alignement sur 16 octets requis par la convention d'appel System V AMD64 pour les arguments flottants.
+- **L'alignement pour les flottants** m'a posé beaucoup de problèmes. J'ai passé presque deux jours à comprendre pourquoi mon programme crashait aléatoirement lors des appels à printf avec des DOUBLE. C'était lié à l'alignement sur 16 octets requis par la convention d'appel System V AMD64.
 
-- **Les registres XMM** étaient complètement nouveaux pour moi. J'ai dû me documenter sur les instructions SSE (Streaming SIMD Extensions) et comprendre comment manipuler ces registres spéciaux. La syntaxe des instructions comme MOVSD et ADDSD était déroutante au début.
+- **Les registres XMM** étaient nouveaux pour moi. J'ai dû chercher des informations sur les instructions SSE et apprendre à manipuler ces registres. Les instructions comme MOVSD et ADDSD n'étaient pas intuitives au début.
 
-- **L'optimisation de CASE** a pris plusieurs itérations. Ma première tentative utilisait une table de sauts (jump table), mais j'ai rencontré des problèmes avec la génération d'adresses relatives. Je suis passé à une approche avec des comparaisons séquentielles qui s'est avérée plus simple à implémenter et à déboguer.
+- Pour **l'implémentation de CASE**, j'ai d'abord essayé de faire une table de sauts (jump table), mais j'ai rencontré des problèmes avec les adresses relatives. J'ai finalement opté pour une solution plus simple avec des comparaisons séquentielles qui fonctionnait mieux.
 
-### Les moments "Eureka"
+### Les moments importants
 
-- Le moment où j'ai réussi à comprendre et implémenter les **conversions implicites entre INTEGER et DOUBLE** a été particulièrement gratifiant. Voir un entier se transformer correctement en flottant dans les registres XMM était une petite victoire.
+- Quand j'ai finalement réussi à implémenter les **conversions implicites entre INTEGER et DOUBLE**, j'étais vraiment content. Faire fonctionner correctement la transformation d'un entier en flottant dans les registres XMM a été une étape importante.
 
-- L'implémentation de **REPEAT..UNTIL** a d'abord semblé facile (juste un WHILE inversé), mais en réalité, la logique des sauts était différente et j'ai dû repenser entièrement son fonctionnement.
+- Pour **REPEAT..UNTIL**, je pensais au début que ce serait simplement un WHILE inversé, mais la logique des sauts est différente et j'ai dû tout repenser.
 
-- Quand j'ai compris que je pouvais **remplacer les constantes "inline"** au lieu de les stocker en mémoire, j'ai été content de cette optimisation simple mais efficace.
+- J'ai été content de trouver comment **remplacer les constantes directement dans le code** au lieu de les stocker en mémoire. C'est une optimisation simple qui améliore les performances.
 
-### Les bugs mémorables
+### Les bugs difficiles
 
-- Le bug le plus tenace était lié à la **gestion de la pile** lors des appels imbriqués de fonction. J'ai remarqué que dans certains cas complexes, la pile devenait désalignée, causant des crashes mystérieux.
+- Un problème persistant concernait la **gestion de la pile** lors des appels imbriqués. Dans certains cas, la pile se désalignait et causait des plantages difficiles à comprendre.
 
-- J'ai passé beaucoup de temps à déboguer un problème où les **valeurs booléennes** n'étaient pas correctement propagées dans les expressions conditionnelles, jusqu'à ce que je comprenne qu'en utilisant 0xFFFFFFFFFFFFFFFF pour TRUE (au lieu de simplement 1), les opérations bit à bit fonctionnaient mieux.
+- Les **valeurs booléennes** m'ont donné du fil à retordre dans les expressions conditionnelles. J'ai fini par utiliser 0xFFFFFFFFFFFFFFFF pour TRUE (au lieu de simplement 1) pour que les opérations bit à bit fonctionnent correctement.
 
-- La syntaxe du CASE avec valeurs multiples a introduit quelques bugs amusants lorsque j'ai essayé de gérer les virgules entre les cas. La distinction entre séparateurs et opérateurs était parfois confuse.
+- La **syntaxe de CASE avec cas multiples** a introduit des bugs quand j'ai implémenté la gestion des virgules entre les cas. Je confondais parfois les séparateurs et les opérateurs.
 
-Ces défis ont rendu le projet passionnant et m'ont permis d'approfondir ma compréhension des compilateurs, de l'assembleur x86-64 et des systèmes bas niveau en général.
+Ce projet m'a permis de mieux comprendre les compilateurs, l'assembleur x86-64 et les mécanismes bas niveau.
